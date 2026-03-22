@@ -1,0 +1,141 @@
+import numpy as np
+import pandas as pd
+from collections import deque
+from typing import Dict, List, Tuple
+import json
+from pathlib import Path
+import time
+
+class SignalMemory:
+    """Track signal history with time-decay confidence"""
+    
+    def __init__(self, maxlen: int = 500, decay_halflife: float = 3600):
+        self.memory = deque(maxlen=maxlen)
+        self.decay_halflife = decay_halflife
+        self.last_signal = None
+    
+    def add(self, signal: Dict):
+        """Add signal with timestamp"""
+        signal['timestamp'] = time.time()
+        self.memory.append(signal)
+        self.last_signal = signal
+    
+    def get_decayed_confidence(self, idx: int = -1) -> float:
+        """Get confidence with time decay"""
+        if not self.memory:
+            return 0.0
+        
+        signal = self.memory[idx]
+        age = time.time() - signal['timestamp']
+        decay_factor = 0.5 ** (age / self.decay_halflife)
+        return signal['confidence'] * decay_factor
+    
+    def get_consensus(self, lookback: int = 10) -> Tuple[str, float]:
+        """Calculate consensus from recent signals"""
+        if not self.memory:
+            return 'NONE', 0.0
+        
+        recent = list(self.memory)[-lookback:]
+        
+        buy_score = sum(1 for s in recent if s['signal'] == 'BUY') 
+        sell_score = sum(1 for s in recent if s['signal'] == 'SELL')
+        hold_score = sum(1 for s in recent if s['signal'] == 'HOLD')
+        
+        scores = {'BUY': buy_score, 'SELL': sell_score, 'HOLD': hold_score}
+        consensus = max(scores, key=scores.get)
+        confidence = scores[consensus] / len(recent)
+        
+        return consensus, confidence
+
+
+class SignalGenerator:
+    """Generate trading signals from multiple indicators"""
+    
+    def __init__(self, memory: SignalMemory = None):
+        self.memory = memory or SignalMemory()
+        self.weights = {
+            'rsi': 0.20,
+            'macd': 0.25,
+            'bollinger': 0.20,
+            'volume': 0.15,
+            'orderflow': 0.15,
+            'ml': 0.05
+        }
+    
+    def generate_signal(self, indicators: Dict, orderflow: Dict = None, 
+                       ml_pred: Dict = None) -> Dict:
+        """Ensemble signal from all sources"""
+        
+        scores = {'BUY': 0.0, 'SELL': 0.0}
+        breakdown = {}
+        
+        # RSI
+        if 'rsi' in indicators:
+            rsi = indicators['rsi']
+            if rsi < 30:
+                scores['BUY'] += (30 - rsi) / 30 * self.weights['rsi']
+            elif rsi > 70:
+                scores['SELL'] += (rsi - 70) / 30 * self.weights['rsi']
+            breakdown['rsi'] = rsi
+        
+        # MACD
+        if 'macd_hist' in indicators:
+            hist = indicators['macd_hist']
+            if hist > 0:
+                scores['BUY'] += min(abs(hist), 1.0) * self.weights['macd']
+            else:
+                scores['SELL'] += min(abs(hist), 1.0) * self.weights['macd']
+            breakdown['macd'] = hist
+        
+        # Bollinger Bands
+        if 'bb_position' in indicators:
+            pos = indicators['bb_position']
+            if pos < 0.2:
+                scores['BUY'] += 0.6 * self.weights['bollinger']
+            elif pos > 0.8:
+                scores['SELL'] += 0.6 * self.weights['bollinger']
+            breakdown['bb'] = pos
+        
+        # Orderflow
+        if orderflow and 'signal' in orderflow:
+            of_sig = orderflow['signal']
+            if of_sig > 0.65:
+                scores['BUY'] += (of_sig - 0.5) * 2 * self.weights['orderflow']
+            elif of_sig < 0.35:
+                scores['SELL'] += (0.5 - of_sig) * 2 * self.weights['orderflow']
+        
+        # ML
+        if ml_pred:
+            if ml_pred['signal'] == 'BUY':
+                scores['BUY'] += ml_pred.get('confidence', 0.5) * self.weights['ml']
+            elif ml_pred['signal'] == 'SELL':
+                scores['SELL'] += ml_pred.get('confidence', 0.5) * self.weights['ml']
+        
+        # Normalize
+        total = scores['BUY'] + scores['SELL']
+        if total > 0:
+            buy_prob = scores['BUY'] / total
+            sell_prob = scores['SELL'] / total
+        else:
+            buy_prob = sell_prob = 0.5
+        
+        # Final signal
+        if buy_prob > 0.60:
+            signal = 'BUY'
+            confidence = buy_prob
+        elif sell_prob > 0.60:
+            signal = 'SELL'
+            confidence = sell_prob
+        else:
+            signal = 'HOLD'
+            confidence = max(buy_prob, sell_prob)
+        
+        result = {
+            'signal': signal,
+            'confidence': confidence,
+            'breakdown': breakdown,
+            'timestamp': time.time()
+        }
+        
+        self.memory.add(result)
+        return result
