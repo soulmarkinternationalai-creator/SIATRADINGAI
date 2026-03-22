@@ -1,0 +1,83 @@
+import numpy as np
+import pandas as pd
+import talib
+from typing import Dict, Tuple
+
+class TechnicalIndicators:
+    """Calculate technical indicators for signal generation"""
+    
+    def __init__(self, df: pd.DataFrame):
+        self.df = df.copy()
+    
+    def calculate_rsi(self, period: int = 14) -> float:
+        """RSI Indicator"""
+        close = self.df['Close'].values
+        rsi = talib.RSI(close, timeperiod=period)[-1]
+        return float(rsi)
+    
+    def calculate_macd(self) -> Tuple[float, float, float]:
+        """MACD Indicator"""
+        close = self.df['Close'].values
+        macd, signal, hist = talib.MACD(close, fastperiod=12, slowperiod=26, signalperiod=9)
+        return float(macd[-1]), float(signal[-1]), float(hist[-1])
+    
+    def calculate_bollinger_bands(self, period: int = 20, std_dev: float = 2.0) -> Dict:
+        """Bollinger Bands"""
+        close = self.df['Close'].values
+        upper, middle, lower = talib.BBANDS(close, timeperiod=period, nbdevup=std_dev, nbdevdn=std_dev)
+        
+        current = close[-1]
+        position = (current - lower[-1]) / (upper[-1] - lower[-1]) if upper[-1] - lower[-1] > 0 else 0.5
+        
+        return {
+            'upper': float(upper[-1]),
+            'middle': float(middle[-1]),
+            'lower': float(lower[-1]),
+            'position': float(position)
+        }
+    
+    def calculate_atr(self, period: int = 14) -> float:
+        """Average True Range"""
+        high = self.df['High'].values
+        low = self.df['Low'].values
+        close = self.df['Close'].values
+        atr = talib.ATR(high, low, close, timeperiod=period)[-1]
+        return float(atr)
+    
+    def calculate_volume_profile(self, lookback: int = 100) -> Dict:
+        """Volume Profile with POC"""
+        df = self.df.tail(lookback)
+        
+        price_buckets = {}
+        for price, volume in zip(df['Close'].values, df['Volume'].values):
+            level = round(price, 1)
+            price_buckets[level] = price_buckets.get(level, 0) + volume
+        
+        poc_price = max(price_buckets, key=price_buckets.get)
+        return {
+            'poc': float(poc_price),
+            'support': float(min(price_buckets.keys())),
+            'resistance': float(max(price_buckets.keys()))
+        }
+    
+    def get_all_indicators(self) -> Dict:
+        """Calculate all indicators at once"""
+        rsi = self.calculate_rsi()
+        macd, signal, hist = self.calculate_macd()
+        bb = self.calculate_bollinger_bands()
+        atr = self.calculate_atr()
+        vp = self.calculate_volume_profile()
+        
+        return {
+            'rsi': rsi,
+            'macd': macd,
+            'macd_signal': signal,
+            'macd_hist': hist,
+            'bb_upper': bb['upper'],
+            'bb_middle': bb['middle'],
+            'bb_lower': bb['lower'],
+            'bb_position': bb['position'],
+            'atr': atr,
+            'vpc': vp,
+            'timestamp': pd.Timestamp.now().timestamp()
+        }
