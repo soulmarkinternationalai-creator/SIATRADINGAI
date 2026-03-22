@@ -1,0 +1,16 @@
+# render_deployment.yaml
+
+version: '2'
+services:
+  app:
+    image: tradingai:latest
+    ports:
+      - "80:80"
+    environment:
+      - ENV=production
+    deploy:
+      replicas: 2
+      restart_policy:
+        condition: on-failure
+
+# Ensure you have your Render settings properly configured to use this deployment configuration.
